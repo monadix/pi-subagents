@@ -208,14 +208,16 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 	for (const terminal of [
 		{ name: "empty text stop", content: [{ type: "text", text: "" }], stopReason: "stop", error: /no output.*empty response/i },
-		{ name: "tool-call-only stop", content: [{ type: "toolCall", id: "read-1", name: "read", arguments: { path: "README.md" } }], stopReason: "toolUse", error: /grep failed.*Path not found/i },
-		{ name: "empty text length limit", content: [{ type: "text", text: "" }], stopReason: "length", error: /grep failed.*Path not found/i },
+		{ name: "empty reasoning and text stop", content: [{ type: "thinking", thinking: "" }, { type: "text", text: "" }], stopReason: "stop", error: /no output.*empty response/i },
+		{ name: "mixed reasoning and empty text stop", content: [{ type: "thinking", thinking: "" }, { type: "thinking", thinking: "Waiting" }, { type: "thinking", thinking: "" }, { type: "text", text: "" }], stopReason: "stop", error: /no output.*empty response/i },
+		{ name: "tool-call-only stop", content: [{ type: "toolCall", id: "read-1", name: "read", arguments: { path: "README.md" } }], stopReason: "toolUse", error: /subagent_supervisor failed.*Tool subagent_supervisor not found/i },
+		{ name: "empty text length limit", content: [{ type: "text", text: "" }], stopReason: "length", error: /subagent_supervisor failed.*Tool subagent_supervisor not found/i },
 	]) {
 		it(`background diagnoses ${terminal.name} after an exploratory tool error`, { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 			mockPi.onCall({
 				stdoutRaw: [
-					events.toolResult("grep", "Path not found", true),
-					events.toolResult("read", "recovered file contents"),
+					events.toolResult("subagent_supervisor", "Tool subagent_supervisor not found", true),
+					events.toolResult("contact_supervisor", "Supervisor acknowledged"),
 					{
 						type: "message_end",
 						message: {
@@ -223,19 +225,21 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 							content: terminal.content,
 							model: "openai/gpt-5-mini",
 							stopReason: terminal.stopReason,
-							usage: { input: 0, output: 4, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+							usage: { input: 0, output: 41, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
 						},
 					},
 				].map((event) => JSON.stringify(event)).join("\n"),
 				exitCode: 0,
 			});
 			const id = `async-terminal-diagnosis-${Date.now().toString(36)}`;
+			const artifactsDir = path.join(tempDir, id);
 			executeAsyncSingle(id, {
 				agent: "worker",
 				task: "Do work",
 				agentConfig: makeAgent("worker", { model: "openai/gpt-5-mini" }),
 				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				artifactsDir,
+				artifactConfig: { enabled: true, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 				shareEnabled: false,
 				maxSubagentDepth: 2,
 			});
@@ -248,6 +252,10 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			assert.equal(payload.results[0]?.output, "");
 			const status = await waitForAsyncState(id, (candidate) => candidate.state === "failed");
 			assert.match(status.steps?.[0]?.error ?? "", terminal.error);
+			const transcriptPath = payload.results[0]?.artifactPaths?.transcriptPath;
+			assert.ok(transcriptPath, "persist the transcript");
+			assert.match(fs.readFileSync(transcriptPath, "utf8"), /Tool subagent_supervisor not found/);
+			assert.equal(mockPi.callCount(), 1, "do not introduce retries");
 		});
 	}
 

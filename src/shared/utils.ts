@@ -482,9 +482,9 @@ export function hasEmptyTerminalAssistantResponse(messages: Message[]): boolean 
 			|| (messages.at(-1) === lastAssistant
 				&& lastAssistant.stopReason === "stop"
 				&& !lastAssistant.errorMessage
-				&& lastAssistant.content.length > 0
-				// Token accounting can be nonzero even when no response text was emitted.
-				&& lastAssistant.content.every((part) => part.type === "text" && part.text === "")));
+				&& lastAssistant.content.some((part) => part.type === "text" && part.text === "")
+				// Token accounting and reasoning can be nonempty without a final answer.
+				&& lastAssistant.content.every((part) => part.type === "thinking" || (part.type === "text" && part.text === ""))));
 }
 
 export function formatEmptyTerminalAssistantResponseError(messages: Message[]): string {

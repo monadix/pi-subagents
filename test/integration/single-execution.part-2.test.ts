@@ -1645,6 +1645,39 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		}
 	});
 
+	for (const thinking of ["", "Waiting"]) {
+		it(`foreground diagnoses empty final text with reasoning ${JSON.stringify(thinking)} after an exploratory tool error`, async () => {
+			mockPi.onCall({
+				stdoutRaw: [
+					events.toolResult("subagent_supervisor", "Tool subagent_supervisor not found", true),
+					events.toolResult("contact_supervisor", "Supervisor acknowledged"),
+					{
+						type: "message_end",
+						message: {
+							role: "assistant",
+							content: [{ type: "thinking", thinking: "" }, { type: "thinking", thinking }, { type: "thinking", thinking: "" }, { type: "text", text: "" }],
+							model: "mock/test-model",
+							stopReason: "stop",
+							usage: { input: 0, output: 41, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+						},
+					},
+				].map((event) => JSON.stringify(event)).join("\n"),
+				exitCode: 0,
+			});
+
+			const result = await runSync(tempDir, [makeAgent("worker")], "worker", "Do work", {
+				runId: `foreground-empty-text-reasoning-${thinking || "empty"}`,
+			});
+
+			assert.equal(result.exitCode, 1);
+			assert.match(result.error ?? "", /no output.*empty response/i);
+			assert.equal(result.finalOutput, "");
+			assert.ok(result.messages.some((message) => message.role === "toolResult" && message.isError
+				&& message.toolName === "subagent_supervisor"), "retain the exploratory tool error in the transcript");
+			assert.equal(mockPi.callCount(), 1, "do not introduce retries");
+		});
+	}
+
 	it("preserves terminal empty-output diagnostics after useful foreground work", async () => {
 		const partialOutput = "I’ll inspect the retained candidate before changing it.";
 		mockPi.onCall({
